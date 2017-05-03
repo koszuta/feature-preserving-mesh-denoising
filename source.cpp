@@ -87,7 +87,9 @@ struct Mesh {
 };
 
 // List of vertex neighbors
-static vector<set<int>> neighborhood;
+static vector<set<int>> vertexNeighbors;
+// #####
+static vector<set<int>> faceNeighbors;
 
 // TODO: Find best way to implement this
 // List of edge neighbors ***
@@ -97,13 +99,13 @@ static pair<int,int>* edgeNeighbors;
 // Spatial smoothing function ***
 float smoothing_func(float x)
 {
-	return exp(-(x*x) / 2 * sigC*sigC);
+	return exp(-x*x / 2*sigC*sigC);
 }
 
 // Influence function ***
 float influence_func(float x)
 {
-	return exp(-(x*x) / 2 * sigS*sigS);
+	return exp(-x*x / 2*sigS*sigS);
 }
 
 // Intensity difference between surface normals ***
@@ -128,7 +130,7 @@ void bilateral_filter(Mesh *mesh)
 		float normTerm = 0.0f;
 
 		// Iterate through each neighbor of face i
-		for (int j : neighborhood[i])
+		for (int j : vertexNeighbors[i])
 		{
 			// Get normal and centroid of neighbor j
 			vec3 nj = mesh->normal[j];
@@ -189,18 +191,30 @@ void smooth(Mesh *mesh) {
 	}
 }
 
+// #####
+// Add neighbors of each face within radius sigC
+void calculateFaceNeighbors(Mesh *mesh, float sigC)
+{
+	for (int i = 0; i < mesh->nf; i++)
+	{
+		for (int j = 0; j < mesh->nf; j++)
+		{
+
+		}
+	}
+}
 
 // TODO: Adds neighbors of each point ***
-void addNeighbors(Mesh *mesh, int a, int b, int c)
+void addVertexNeighbors(Mesh *mesh, int a, int b, int c)
 {
-	neighborhood[a].insert(b);
-	neighborhood[a].insert(c);
+	vertexNeighbors[a].insert(b);
+	vertexNeighbors[a].insert(c);
 
-	neighborhood[b].insert(a);
-	neighborhood[b].insert(c);
+	vertexNeighbors[b].insert(a);
+	vertexNeighbors[b].insert(c);
 
-	neighborhood[c].insert(a);
-	neighborhood[c].insert(b);
+	vertexNeighbors[c].insert(a);
+	vertexNeighbors[c].insert(b);
 }
 
 // Calculate surface normals with glm functions ***
@@ -254,7 +268,8 @@ Mesh* readPolygon()
 
 	// Allocate space for the neighborhoods
 	// #####
-	neighborhood.resize(n);
+	vertexNeighbors.resize(m);
+	faceNeighbors.resize(n);
 
 	// TODO: Figure out how to get neighboring faces of edges
 	//edgeNeighbors = (pair<int,int>*) malloc(sizeof(pair<int, int>) * num);
@@ -273,7 +288,7 @@ Mesh* readPolygon()
 		surfmesh->face[n].z = d;
 
 		// Add neighbors for each vertex ***
-		addNeighbors(surfmesh, b, c, d);
+		addVertexNeighbors(surfmesh, b, c, d);
 		// Calculate face surface normal ***
 		surfmesh->normal[n] = addNormal(surfmesh, b, c, d);
 		// Calculate triangle centroid ***
