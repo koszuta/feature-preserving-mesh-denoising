@@ -1,1 +1,0 @@
-# Feature-Preserving-Mesh-Denoising
