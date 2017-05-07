@@ -191,19 +191,6 @@ void smooth(Mesh *mesh) {
 	}
 }
 
-// #####
-// Add neighbors of each face within radius sigC
-void calculateFaceNeighbors(Mesh *mesh, float sigC)
-{
-	for (int i = 0; i < mesh->nf; i++)
-	{
-		for (int j = 0; j < mesh->nf; j++)
-		{
-
-		}
-	}
-}
-
 // TODO: Adds neighbors of each point ***
 void addVertexNeighbors(Mesh *mesh, int a, int b, int c)
 {
@@ -215,6 +202,29 @@ void addVertexNeighbors(Mesh *mesh, int a, int b, int c)
 
 	vertexNeighbors[c].insert(a);
 	vertexNeighbors[c].insert(b);
+}
+
+// Calculate the vertex neighbors for Phase 1
+// #####
+void addVertexNeighbors_BF()
+{
+
+}
+
+// Return whether the distance between vertices is ceil(2*sigC) 
+// #####
+bool isWithinRadius(vec3 u, vec3 v)
+{
+	return distance(u, v) < ceil(2*sigC);
+}
+
+// Add neighboring face normal to vertex
+// #####
+void addNeighborNormals(int n, int a, int b, int c)
+{
+	lseNeighboringNormals[a].insert(n);
+	lseNeighboringNormals[b].insert(n);
+	lseNeighboringNormals[c].insert(n);
 }
 
 // Calculate surface normals with glm functions ***
@@ -255,24 +265,25 @@ Mesh* readPolygon()
 	fscanf(fin, "%d %d %d\n", &m, &n, &num);
 
 	// Read first line and save in Mesh
-	surfmesh = (Mesh*)malloc(sizeof(Mesh));
+	surfmesh = (Mesh*) malloc(sizeof(Mesh));
 	surfmesh->nv = m;
 	surfmesh->nf = n;
 	surfmesh->ne = num;
 
 	// Allocate space for lists based on mesh size ***
-	surfmesh->vertex = (vec3*)malloc(sizeof(vec3) * m);
-	surfmesh->face = (ivec3*)malloc(sizeof(ivec3) * n);
-	surfmesh->normal = (vec3*)malloc(sizeof(vec3) * n);
-	surfmesh->centroid = (vec3*)malloc(sizeof(vec3) * n);
+	surfmesh->vertex = (vec3*) malloc(sizeof(vec3) * surfmesh->nv);
+	surfmesh->face = (ivec3*) malloc(sizeof(ivec3) * surfmesh->nf);
+	surfmesh->normal = (vec3*) malloc(sizeof(vec3) * surfmesh->nf);
+	surfmesh->centroid = (vec3*) malloc(sizeof(vec3) * surfmesh->nf);
 
 	// Allocate space for the neighborhoods
 	// #####
-	vertexNeighbors.resize(m);
-	faceNeighbors.resize(n);
+	vertexNeighbors.resize(surfmesh->nv);
+	faceNeighbors.resize(surfmesh->nf);
 
 	// TODO: Figure out how to get neighboring faces of edges
-	//edgeNeighbors = (pair<int,int>*) malloc(sizeof(pair<int, int>) * num);
+	// #####
+	lseNeighboringNormals.resize(surfmesh->nv);
 
 	for (n = 0; n < surfmesh->nv; n++) {
 		fscanf(fin, "%f %f %f\n", &x, &y, &z);
@@ -289,6 +300,9 @@ Mesh* readPolygon()
 
 		// Add neighbors for each vertex ***
 		addVertexNeighbors(surfmesh, b, c, d);
+		// Add normal neighbors for each vertex
+		// #####
+		addNeighborNormals(n, b, c, d);
 		// Calculate face surface normal ***
 		surfmesh->normal[n] = addNormal(surfmesh, b, c, d);
 		// Calculate triangle centroid ***
