@@ -12,8 +12,10 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <unordered_set>
 #include <algorithm>
 #include <climits>
+#include <chrono>
 
 // GLM header file ***
 #include <glm/glm.hpp>
@@ -94,7 +96,7 @@ struct Mesh {
 static vector<set<int>> LSE_vertexNeighbors;
 static vector<set<int>> LSE_faceNeighbors;
 
-static vector<set<int>> BF_faceNeighbors;
+static vector<unordered_set<int>> BF_faceNeighbors;
 
 
 void getRadius(Mesh* mesh)
@@ -145,19 +147,18 @@ bool isWithinRadius(vec3 u, vec3 v)
 	return distance(u, v) < ceil(2 * sigC);
 }
 
+// TODO: Optimize
 void calcBfFaceNeighbors(Mesh *mesh)
 {
 	for (int i = 0; i < mesh->nf; i++)
 	{
 		if (i % 1000 == 0) printf("Face %d\n", i);
-		for (int j = 0; j < mesh->nf; j++)
+		for (int j = i; j < mesh->nf; j++)
 		{
-			if (i != j &&
-				//BF_faceNeighbors[i].count(j) > 0 &&
-				isWithinRadius(mesh->centroid[i], mesh->centroid[j]))
+			if (i != j && isWithinRadius(mesh->centroid[i], mesh->centroid[j]))
 			{
 				BF_faceNeighbors[i].insert(j);
-				//BF_faceNeighbors[j].insert(i);
+				BF_faceNeighbors[j].insert(i);
 			}
 		}
 	}
@@ -198,7 +199,7 @@ void bilateral_filter(Mesh *mesh)
 		float normTerm = 0.0f;
 
 		// Iterate through each neighbor of face i
-		for (int j : BF_faceNeighbors[i])
+		for (const auto& j : BF_faceNeighbors[i])
 		{
 			// Get normal and centroid of neighbor j
 			vec3 nj = mesh->normal[j];
@@ -438,7 +439,7 @@ void draw()
 		glNormal3f(surfmesh->normal[i].x, surfmesh->normal[i].y, surfmesh->normal[i].z);
 		if (i == userFace)
 		{
-			GLfloat highlighted[3] = { 255-PURPLE[0], 255-PURPLE[1], 255-PURPLE[2] };
+			GLfloat highlighted[3] = { 1.0f-PURPLE[0], 1.0f-PURPLE[1], 1.0f-PURPLE[2] };
 			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, highlighted);
 		}
 		else
@@ -655,7 +656,12 @@ int main(int argc, char *argv[])
 	printf("face = %d\n", userFace);
 	printf("sigC = %f\n", sigC);
 	getRadius(surfmesh);
+	chrono::time_point<chrono::system_clock> start = chrono::system_clock::now();
 	calcBfFaceNeighbors(surfmesh);
+	chrono::time_point<chrono::system_clock> end = chrono::system_clock::now();
+	chrono::duration<double> duration = end - start;
+	printf("BF face neighbor duration = %f\n", duration);
+
 	printf("face = %d\n", userFace);
 	printf("sigC = %f\n", sigC);
 	smooth(surfmesh);
