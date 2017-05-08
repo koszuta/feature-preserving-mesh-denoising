@@ -16,7 +16,7 @@
 #include <climits>
 
 // GLM header file ***
-#include "glm/glm.hpp"
+#include <glm/glm.hpp>
 
 using namespace std;
 using namespace glm;
@@ -104,20 +104,13 @@ void getRadius(Mesh* mesh)
 	while (strcmp(temp.c_str(), "y"))
 	{
 		temp = "";
-		cout << "Enter face number in range [0, " << mesh->nf << ") at center of smooth area..." << endl;
-		try
-		{
-			cin >> face;
-		}
-		catch (istream::failure e)
-		{
-			cerr << e.what();
-			continue;
-		}
-
-		if (0 > face || face > mesh->nf-1)
+		cout << "Enter face at center of area expected to be smooth, in range [0, " << mesh->nf << ")" << endl;
+		
+		if (!(cin >> face) || 0 > face || face > mesh->nf-1)
 		{
 			cout << "OUT OF RANGE" << endl;
+			cin.clear();
+			cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 			continue;
 		}
 
@@ -132,10 +125,12 @@ void getRadius(Mesh* mesh)
 	{
 		temp = "";
 		cout << "Enter radius of the smooth area..." << endl;
-		cin >> radius;
-		if (radius < 0)
+		
+		if (!(cin >> radius) || radius <= 0)
 		{
-			cout << "OUT OF RANGE" << endl;
+			cout << "RADIUS MUST BE > 0" << endl;
+			cin.clear();
+			cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 			continue;
 		}
 		sigC = radius;
@@ -154,18 +149,15 @@ void calcBfFaceNeighbors(Mesh *mesh)
 {
 	for (int i = 0; i < mesh->nf; i++)
 	{
-		if (i % 100 == 0)
-		{
-			printf("Face %d\n", i);
-		}
+		if (i % 1000 == 0) printf("Face %d\n", i);
 		for (int j = 0; j < mesh->nf; j++)
 		{
 			if (i != j &&
-				BF_faceNeighbors[i].find(j) != BF_faceNeighbors[i].end() &&
+				//BF_faceNeighbors[i].count(j) > 0 &&
 				isWithinRadius(mesh->centroid[i], mesh->centroid[j]))
 			{
 				BF_faceNeighbors[i].insert(j);
-				BF_faceNeighbors[j].insert(i);
+				//BF_faceNeighbors[j].insert(i);
 			}
 		}
 	}
@@ -197,11 +189,12 @@ void bilateral_filter(Mesh *mesh)
 
 	for (int i = 0; i < mesh->nf; i++)
 	{
+		//printf("BF: Face %d\n", i);
 		// Get normal and centroid of face i
 		vec3 ni = mesh->normal[i];
 		vec3 ci = mesh->centroid[i];
 
-		vec3 topSum = { 0.0f, 0.0f, 0.0f };
+		vec3 topSum;
 		float normTerm = 0.0f;
 
 		// Iterate through each neighbor of face i
@@ -227,8 +220,9 @@ void bilateral_filter(Mesh *mesh)
 
 	// Copy new array of normals to mesh array of normals
 	// TODO: Make sure this works
+	printf("BF: Copying new normals to mesh\n");
 	memcpy(mesh->normal, newNormals, sizeof(vec3) * mesh->nf);
-	std::free(newNormals);
+	free(newNormals);
 }
 
 // Adjust vertices using Least Squares Error method ***
@@ -238,14 +232,16 @@ void lse_correction(Mesh *mesh)
 
 	for (int i = 0; i < mesh->nv; i++)
 	{
+		//printf("LSE: Vertex %d\n", i);
 		vec3 sum;
 		for (int j : LSE_vertexNeighbors[i])
 		{
 			vector<int> edgeNeighbors(2);
 			set_intersection(LSE_faceNeighbors[i].begin(), LSE_faceNeighbors[i].end(), LSE_faceNeighbors[j].begin(), LSE_faceNeighbors[j].end(), edgeNeighbors.begin());
-			if (edgeNeighbors.size() > 2)
+			edgeNeighbors.shrink_to_fit();
+			if (edgeNeighbors.size() != 2)
 			{
-				printf("Too many edge neighbors!! You got %d, should be 2\n", edgeNeighbors.size());
+				printf("Got %d edge neighbors, should be 2\n", edgeNeighbors.size());
 			}
 			vec3 sum2;
 			for (int f : edgeNeighbors)
@@ -258,8 +254,9 @@ void lse_correction(Mesh *mesh)
 	}
 	// TODO: Make sure this works
 	// Copy new vertices to mesh vertices
-	memcpy(mesh->vertex, newVertices, sizeof(vec3) * mesh->nv);	
-	std::free(newVertices);
+	printf("LSE: Copying new vertices to mesh\n");
+	memcpy(mesh->vertex, newVertices, sizeof(vec3) * mesh->nv);
+	free(newVertices);
 }
 
 void smooth(Mesh *mesh) {
