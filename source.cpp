@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <algorithm>
+#include <climits>
 
 // GLM header file ***
 #include "glm/glm.hpp"
@@ -29,12 +31,14 @@ static const char* outputPath = "";
 // Define constants for algorithm ***
 static const int NF = 3;
 static const int NV = 10;
-static const float LAMBDA = 0.6307f;
+static const float LAMBDA = 0.01f;// 0.6307f;
 
 // User defined sigma c (radius) and sigma s (standard deviation
 // of intesity differneces between center and area) ***
 static float sigC = 0.0f;
 static float sigS = 0.0f;
+
+static int userFace = -1;
 
 // Position of light ***
 vec3 light_pos = { 1.0f, 1.0f, 1.0f };
@@ -87,14 +91,85 @@ struct Mesh {
 };
 
 // List of vertex neighbors
-static vector<set<int>> vertexNeighbors;
-// #####
-static vector<set<int>> faceNeighbors;
+static vector<set<int>> LSE_vertexNeighbors;
+static vector<set<int>> LSE_faceNeighbors;
 
-// TODO: Find best way to implement this
-// List of edge neighbors ***
-static pair<int,int>* edgeNeighbors;
+static vector<set<int>> BF_faceNeighbors;
 
+
+void getRadius(Mesh* mesh)
+{
+	string temp = "";
+	int face = 0;
+	while (strcmp(temp.c_str(), "y"))
+	{
+		temp = "";
+		cout << "Enter face number in range [0, " << mesh->nf << ") at center of smooth area..." << endl;
+		try
+		{
+			cin >> face;
+		}
+		catch (istream::failure e)
+		{
+			cerr << e.what();
+			continue;
+		}
+
+		if (0 > face || face > mesh->nf-1)
+		{
+			cout << "OUT OF RANGE" << endl;
+			continue;
+		}
+
+		userFace = face;
+		cout << "Use face " << face << "? (y/n)" << endl;
+		cin >> temp;
+	}
+
+	float radius = 0;
+	temp = "";
+	while (strcmp(temp.c_str(), "y"))
+	{
+		temp = "";
+		cout << "Enter radius of the smooth area..." << endl;
+		cin >> radius;
+		if (radius < 0)
+		{
+			cout << "OUT OF RANGE" << endl;
+			continue;
+		}
+		sigC = radius;
+		cout << "Use radius " << radius << "? (y/n)" << endl;
+		cin >> temp;
+	}
+}
+
+// Return whether the distance between vertices is ceil(2*sigC)
+bool isWithinRadius(vec3 u, vec3 v)
+{
+	return distance(u, v) < ceil(2 * sigC);
+}
+
+void calcBfFaceNeighbors(Mesh *mesh)
+{
+	for (int i = 0; i < mesh->nf; i++)
+	{
+		if (i % 100 == 0)
+		{
+			printf("Face %d\n", i);
+		}
+		for (int j = 0; j < mesh->nf; j++)
+		{
+			if (i != j &&
+				BF_faceNeighbors[i].find(j) != BF_faceNeighbors[i].end() &&
+				isWithinRadius(mesh->centroid[i], mesh->centroid[j]))
+			{
+				BF_faceNeighbors[i].insert(j);
+				BF_faceNeighbors[j].insert(i);
+			}
+		}
+	}
+}
 
 // Spatial smoothing function ***
 float smoothing_func(float x)
@@ -130,7 +205,7 @@ void bilateral_filter(Mesh *mesh)
 		float normTerm = 0.0f;
 
 		// Iterate through each neighbor of face i
-		for (int j : vertexNeighbors[i])
+		for (int j : BF_faceNeighbors[i])
 		{
 			// Get normal and centroid of neighbor j
 			vec3 nj = mesh->normal[j];
@@ -153,8 +228,6 @@ void bilateral_filter(Mesh *mesh)
 	// Copy new array of normals to mesh array of normals
 	// TODO: Make sure this works
 	memcpy(mesh->normal, newNormals, sizeof(vec3) * mesh->nf);
-
-	// #####
 	std::free(newNormals);
 }
 
@@ -165,16 +238,27 @@ void lse_correction(Mesh *mesh)
 
 	for (int i = 0; i < mesh->nv; i++)
 	{
-
-		// TODO: Implement LSE correction
-
+		vec3 sum;
+		for (int j : LSE_vertexNeighbors[i])
+		{
+			vector<int> edgeNeighbors(2);
+			set_intersection(LSE_faceNeighbors[i].begin(), LSE_faceNeighbors[i].end(), LSE_faceNeighbors[j].begin(), LSE_faceNeighbors[j].end(), edgeNeighbors.begin());
+			if (edgeNeighbors.size() > 2)
+			{
+				printf("Too many edge neighbors!! You got %d, should be 2\n", edgeNeighbors.size());
+			}
+			vec3 sum2;
+			for (int f : edgeNeighbors)
+			{
+				sum2 += outerProduct(mesh->normal[f], mesh->normal[f]) * (mesh->vertex[j] - mesh->vertex[i]);
+			}
+			sum += sum2;
+		}
+		newVertices[i] = mesh->vertex[i] + LAMBDA * sum;
 	}
-
 	// TODO: Make sure this works
 	// Copy new vertices to mesh vertices
-	//memcpy(mesh->vertex, newVertices, sizeof(vec3) * mesh->nv);
-	
-	// #####
+	memcpy(mesh->vertex, newVertices, sizeof(vec3) * mesh->nv);	
 	std::free(newVertices);
 }
 
@@ -194,37 +278,22 @@ void smooth(Mesh *mesh) {
 // TODO: Adds neighbors of each point ***
 void addVertexNeighbors(Mesh *mesh, int a, int b, int c)
 {
-	vertexNeighbors[a].insert(b);
-	vertexNeighbors[a].insert(c);
+	LSE_vertexNeighbors[a].insert(b);
+	LSE_vertexNeighbors[a].insert(c);
 
-	vertexNeighbors[b].insert(a);
-	vertexNeighbors[b].insert(c);
+	LSE_vertexNeighbors[b].insert(a);
+	LSE_vertexNeighbors[b].insert(c);
 
-	vertexNeighbors[c].insert(a);
-	vertexNeighbors[c].insert(b);
-}
-
-// Calculate the vertex neighbors for Phase 1
-// #####
-void addVertexNeighbors_BF()
-{
-
-}
-
-// Return whether the distance between vertices is ceil(2*sigC) 
-// #####
-bool isWithinRadius(vec3 u, vec3 v)
-{
-	return distance(u, v) < ceil(2*sigC);
+	LSE_vertexNeighbors[c].insert(a);
+	LSE_vertexNeighbors[c].insert(b);
 }
 
 // Add neighboring face normal to vertex
-// #####
 void addNeighborNormals(int n, int a, int b, int c)
 {
-	lseNeighboringNormals[a].insert(n);
-	lseNeighboringNormals[b].insert(n);
-	lseNeighboringNormals[c].insert(n);
+	LSE_faceNeighbors[a].insert(n);
+	LSE_faceNeighbors[b].insert(n);
+	LSE_faceNeighbors[c].insert(n);
 }
 
 // Calculate surface normals with glm functions ***
@@ -277,13 +346,11 @@ Mesh* readPolygon()
 	surfmesh->centroid = (vec3*) malloc(sizeof(vec3) * surfmesh->nf);
 
 	// Allocate space for the neighborhoods
-	// #####
-	vertexNeighbors.resize(surfmesh->nv);
-	faceNeighbors.resize(surfmesh->nf);
+	LSE_vertexNeighbors.resize(surfmesh->nv);
+	LSE_faceNeighbors.resize(surfmesh->nv);
 
 	// TODO: Figure out how to get neighboring faces of edges
-	// #####
-	lseNeighboringNormals.resize(surfmesh->nv);
+	BF_faceNeighbors.resize(surfmesh->nf);
 
 	for (n = 0; n < surfmesh->nv; n++) {
 		fscanf(fin, "%f %f %f\n", &x, &y, &z);
@@ -301,7 +368,6 @@ Mesh* readPolygon()
 		// Add neighbors for each vertex ***
 		addVertexNeighbors(surfmesh, b, c, d);
 		// Add normal neighbors for each vertex
-		// #####
 		addNeighborNormals(n, b, c, d);
 		// Calculate face surface normal ***
 		surfmesh->normal[n] = addNormal(surfmesh, b, c, d);
@@ -373,6 +439,15 @@ void draw()
 	for (int i = 0; i < surfmesh->nf; ++i) {
 		// Use face's surface normal for lighting ***
 		glNormal3f(surfmesh->normal[i].x, surfmesh->normal[i].y, surfmesh->normal[i].z);
+		if (i == userFace)
+		{
+			GLfloat highlighted[3] = { 255-PURPLE[0], 255-PURPLE[1], 255-PURPLE[2] };
+			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, highlighted);
+		}
+		else
+		{
+			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, PURPLE);
+		}
 		glBegin(GL_TRIANGLES);
 			glVertex3f(surfmesh->vertex[surfmesh->face[i].x].x, surfmesh->vertex[surfmesh->face[i].x].y, surfmesh->vertex[surfmesh->face[i].x].z);
 			glVertex3f(surfmesh->vertex[surfmesh->face[i].y].x, surfmesh->vertex[surfmesh->face[i].y].y, surfmesh->vertex[surfmesh->face[i].y].z);
@@ -580,12 +655,18 @@ void idle()
 
 int main(int argc, char *argv[])
 {
+	printf("face = %d\n", userFace);
+	printf("sigC = %f\n", sigC);
+	getRadius(surfmesh);
+	calcBfFaceNeighbors(surfmesh);
+	printf("face = %d\n", userFace);
+	printf("sigC = %f\n", sigC);
 	smooth(surfmesh);
 
-	/*
+	//*
 	// Write the smoothed mesh to OFF file
 	string meshPathOut(outputPath);
-	meshPathOut.append("smooth" + to_string(ITERATIONS) + ".off");
+	meshPathOut.append("smooth.off");
 	writeMeshToFile(surfmesh, meshPathOut.c_str());
 	//*/
 
@@ -616,7 +697,6 @@ int main(int argc, char *argv[])
 
 	glutMainLoop();
 
-	// #####
 	std::free(surfmesh->vertex);
 	std::free(surfmesh->face);
 	std::free(surfmesh->normal);
