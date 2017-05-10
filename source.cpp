@@ -245,9 +245,11 @@ void bilateral_filter(Mesh *mesh)
 
 		vector<int> toVisit;
 		unordered_set<int> visitedVertices;
-		for (int v = 0; v < mesh->face[i].length(); v++)
+		glm::ivec3 fi = mesh->face[i];
+		for (int v = 0; v < fi.length(); v++)
 		{
-			for (int f : neighborFaces[mesh->face[i][v]])
+			visitedVertices.insert(fi[v]);
+			for (int f : neighborFaces[fi[v]])
 			{
 				if (f != i && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
 				{
@@ -271,9 +273,8 @@ void bilateral_filter(Mesh *mesh)
 			{
 				for (int v = 0; v < fj.length(); v++)
 				{
-					if (visitedVertices.count(fj[v]) == 0)
+					if (visitedVertices.insert(fj[v]).second)
 					{
-						visitedVertices.insert(fj[v]);
 						for (int f : neighborFaces[fj[v]])
 						{
 							if (f != i && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
