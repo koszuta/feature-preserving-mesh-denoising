@@ -42,10 +42,13 @@ static float sigC = 0.0f;
 static float sigS = 0.0f;
 
 static int userFace = -1;
+static unordered_set<int> facesWithinRadius;
 
 // Position of light ***
 glm::vec3 light_pos = { 1.0f, 1.0f, 1.0f };
 const GLfloat PURPLE[3] = { 0.5f, 0.0f, 1.0f };
+const GLfloat WHITE[3] = { 1.0f, 1.0f, 1.0f };
+const GLfloat BLACK[3] = { 0.0f, 0.0f, 0.0f };
 
 const float ANGFACT = { 1. };
 const float MINSCALE = { 0.00f };
@@ -100,15 +103,23 @@ static vector<set<int>> neighborFaces;
 static vector<set<int>> BF_faceNeighbors;
 
 
+// Intensity difference between surface normals ***
+float intensity_diff(glm::vec3 u, glm::vec3 v)
+{
+	return glm::dot(u, u - v);
+}
+
+// Get user defined center face and radius
 void getRadius(Mesh* mesh)
 {
 	string temp = "";
-	int face = 0;
 	while (strcmp(temp.c_str(), "y"))
 	{
 		temp = "";
 		cout << "Enter face at center of area expected to be smooth, in range [0, " << mesh->nf << ")" << endl;
-		
+
+		int face;
+		cin.clear();
 		if (!(cin >> face) || 0 > face || face > mesh->nf-1)
 		{
 			cout << "OUT OF RANGE" << endl;
@@ -122,13 +133,15 @@ void getRadius(Mesh* mesh)
 		cin >> temp;
 	}
 
-	float radius = 0;
 	temp = "";
 	while (strcmp(temp.c_str(), "y"))
 	{
 		temp = "";
 		cout << "Enter radius of the smooth area..." << endl;
-		
+		facesWithinRadius.clear();
+
+		float radius;
+		cin.clear();
 		if (!(cin >> radius) || radius <= 0)
 		{
 			cout << "RADIUS MUST BE > 0" << endl;
@@ -137,32 +150,70 @@ void getRadius(Mesh* mesh)
 			continue;
 		}
 		sigC = radius;
+		for (int i = 0; i < mesh->nf; i++)
+		{
+			if (i != userFace && sigC > glm::distance(mesh->centroid[i], mesh->centroid[userFace]))
+			{
+				facesWithinRadius.insert(i);
+			}
+		}
 		cout << "Use radius " << radius << "? (y/n)" << endl;
 		cin >> temp;
 	}
-}
 
-// Return whether the distance between vertices is ceil(2*sigC)
-bool isWithinRadius(glm::vec3 u, glm::vec3 v)
-{
-	return glm::distance(u, v) < ceil(2 * sigC);
-}
+	printf("\nface = %d, radius = %f\n", userFace, sigC);
 
-// TODO: Optimize
-void calcBfFaceNeighbors(Mesh *mesh)
-{
-	for (int i = 0; i < mesh->nf; i++)
+	vector<int> toVisit;
+	unordered_set<int> visitedVertices;
+	glm::ivec3 fCenter = mesh->face[userFace];
+	glm::vec3 nCenter = mesh->normal[userFace];
+	glm::vec3 cCenter = mesh->centroid[userFace];
+	for (int v = 0; v < fCenter.length(); v++)
 	{
-		if (i % 1000 == 0) printf("Face %d\n", i);
-		for (int j = i; j < mesh->nf; j++)
+		visitedVertices.insert(fCenter[v]);
+		for (int f : neighborFaces[fCenter[v]])
 		{
-			if (i != j && isWithinRadius(mesh->centroid[i], mesh->centroid[j]))
+			if (f != userFace && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
 			{
-				BF_faceNeighbors[i].insert(j);
-				BF_faceNeighbors[j].insert(i);
+				toVisit.push_back(f);
 			}
 		}
 	}
+
+	int N = 0;
+	float sum = 0.0f;
+
+	for (int j = 0; j < toVisit.size(); j++)
+	{
+		glm::ivec3 fj = mesh->face[toVisit[j]];
+
+		// Get normal and centroid of face j
+		glm::vec3 nj = mesh->normal[toVisit[j]];
+		glm::vec3 cj = mesh->centroid[toVisit[j]];
+		float distance = glm::distance(cj, cCenter);
+		if (distance < sigC)
+		{
+			for (int v = 0; v < fj.length(); v++)
+			{
+				if (visitedVertices.insert(fj[v]).second)
+				{
+					for (int f : neighborFaces[fj[v]])
+					{
+						if (f != userFace && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
+						{
+							toVisit.push_back(f);
+						}
+					}
+				}
+			}
+			
+			// Add intensity difference between normal j and center
+			sum += pow(intensity_diff(nCenter, nj), 2);
+			N++;
+		}
+	}
+	sigS = sqrt(sum / N);
+	printf("standard deviation = %f\n", sigS);
 }
 
 // Spatial smoothing function ***
@@ -176,60 +227,6 @@ float influence_func(float x)
 {
 	return exp(-x*x / 2*sigS*sigS);
 }
-
-// Intensity difference between surface normals ***
-float intensity_diff(glm::vec3 u, glm::vec3 v)
-{
-	return glm::dot(u, u - v);
-}
-
-/*
-pair<glm::vec3, float> doFilter(Mesh *mesh, int i, int j, unordered_set<int> &visited)
-{
-	// Add face to list of visited faces
-	visited.insert(j);
-
-	glm::vec3 ci = mesh->centroid[i];
-	glm::vec3 cj = mesh->centroid[j];
-
-	// Find distance between center face and face j
-	float distance = glm::distance(ci, cj);
-	if (distance > ceil(2 * sigC))
-	{
-		// If face j is outside of radius, return 0
-		return { glm::vec3(0.0f), 0.0f };
-	}
-
-	pair<glm::vec3, float> total;
-	glm::vec3 ni = mesh->normal[i];
-	glm::vec3 nj = mesh->normal[j];
-
-	// Calculate for each neighbor and add to result
-	for (int k = 0; k < mesh->face[j].length(); k++)
-	{
-		for (int next : neighborFaces[mesh->face[j][k]])
-		{
-			if (visited.find(next) == visited.end())
-			{
-				pair<glm::vec3, float> result = doFilter(mesh, i, next, visited);
-				total.first += result.first;
-				total.second += result.second;
-			}
-		}
-	}
-
-	if (i != j)
-	{
-		// Calculate Ws and Wc
-		float wc = smoothing_func(distance);
-		float ws = influence_func(intensity_diff(ni, nj));
-
-		total.first += (wc * ws * nj);
-		total.second += (wc * ws);
-	}
-	return total;
-}
-//*/
 
 // Apply bilateral filter to smooth surface normals ***
 void bilateral_filter(Mesh *mesh)
@@ -534,8 +531,12 @@ void draw()
 		glNormal3f(surfmesh->normal[i].x, surfmesh->normal[i].y, surfmesh->normal[i].z);
 		if (i == userFace)
 		{
-			GLfloat highlighted[3] = { 1.0f-PURPLE[0], 1.0f-PURPLE[1], 1.0f-PURPLE[2] };
-			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, highlighted);
+			const GLfloat HIGHLIGHT[3] = { 1.0f - PURPLE[0], 1.0f - PURPLE[1], 1.0f - PURPLE[2] };
+			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, HIGHLIGHT);
+		}
+		else if (facesWithinRadius.count(i) != 0)
+		{
+			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, WHITE);
 		}
 		else
 		{
@@ -768,7 +769,8 @@ void doSmooth()
 
 int main(int argc, char *argv[])
 {
-	thread t1(doSmooth);
+	//thread t1(doSmooth);
+	doSmooth();
 
 	glutInit(&argc, argv);
 
@@ -803,6 +805,6 @@ int main(int argc, char *argv[])
 	std::free(surfmesh->centroid);
 	std::free(surfmesh);
 
-	t1.join();
+	//t1.join();
 	return 0;
 }
