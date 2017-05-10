@@ -184,15 +184,10 @@ float intensity_diff(glm::vec3 u, glm::vec3 v)
 }
 
 /*
-pair<glm::vec3, float> doFilter(Mesh *mesh, int i, int j, set<int> duplicates)
+pair<glm::vec3, float> doFilter(Mesh *mesh, int i, int j, unordered_set<int> &visited)
 {
-	// First, check if the face has already been visited
-	if (duplicates.find(j) != duplicates.end())
-	{
-		return { glm::vec3(0.0f), 0.0f };
-	}
-	// Mark face as visited
-	duplicates.insert(j);
+	// Add face to list of visited faces
+	visited.insert(j);
 
 	glm::vec3 ci = mesh->centroid[i];
 	glm::vec3 cj = mesh->centroid[j];
@@ -205,40 +200,34 @@ pair<glm::vec3, float> doFilter(Mesh *mesh, int i, int j, set<int> duplicates)
 		return { glm::vec3(0.0f), 0.0f };
 	}
 
+	pair<glm::vec3, float> total;
 	glm::vec3 ni = mesh->normal[i];
 	glm::vec3 nj = mesh->normal[j];
 
-	// Calculate Ws and Wc
-	float wc = smoothing_func(glm::distance(cj, ci));
-	float ws = influence_func(intensity_diff(ni, nj));
-
-	// Sum up values
-	pair<glm::vec3, float> result;
-
-	set<int> neighbors;
-	glm::ivec3 fj = mesh->face[j];
 	// Calculate for each neighbor and add to result
-	for (int k = 0; k < fj.length(); k++)
+	for (int k = 0; k < mesh->face[j].length(); k++)
 	{
-		set<int> n = neighborFaces[fj[k]];
-		neighbors.insert(n.begin(), n.end());
-	}
-	vector<int> facesToDo(neighbors.size(), -1);
-	set_difference(neighbors.begin(), neighbors.end(), duplicates.begin(), duplicates.end(), facesToDo.begin());
-	for (int next : facesToDo)
-	{
-		if (next == -1) continue;
-		pair<glm::vec3, float> s = doFilter(mesh, i, next, duplicates);
-		result.first += s.first;
-		result.second += s.second;
+		for (int next : neighborFaces[mesh->face[j][k]])
+		{
+			if (visited.find(next) == visited.end())
+			{
+				pair<glm::vec3, float> result = doFilter(mesh, i, next, visited);
+				total.first += result.first;
+				total.second += result.second;
+			}
+		}
 	}
 
 	if (i != j)
 	{
-		result.first += (wc * ws * nj);
-		result.second += (wc * ws);
+		// Calculate Ws and Wc
+		float wc = smoothing_func(distance);
+		float ws = influence_func(intensity_diff(ni, nj));
+
+		total.first += (wc * ws * nj);
+		total.second += (wc * ws);
 	}
-	return result;
+	return total;
 }
 //*/
 
@@ -379,7 +368,7 @@ void smooth(Mesh *mesh) {
 }
 
 // TODO: Adds neighbors of each point ***
-void addVertexNeighbors(Mesh *mesh, int a, int b, int c)
+void addVertexNeighbors(int a, int b, int c)
 {
 	neighborVertices[a].insert(b);
 	neighborVertices[a].insert(c);
@@ -469,7 +458,7 @@ Mesh* readPolygon()
 		surfmesh->face[n].z = d;
 
 		// Add neighbors for each vertex ***
-		addVertexNeighbors(surfmesh, b, c, d);
+		addVertexNeighbors(b, c, d);
 		// Add normal neighbors for each vertex
 		addNeighborNormals(n, b, c, d);
 		// Calculate face surface normal ***
