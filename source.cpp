@@ -17,6 +17,7 @@
 #include <climits>
 #include <chrono>
 #include <fstream>
+#include <thread>
 
 // GLM header file ***
 #include <glm/glm.hpp>
@@ -93,8 +94,8 @@ struct Mesh {
 };
 
 // List of vertex neighbors
-static vector<set<int>> LSE_vertexNeighbors;
-static vector<set<int>> LSE_faceNeighbors;
+static vector<set<int>> neighborVertices;
+static vector<set<int>> neighborFaces;
 
 static vector<set<int>> BF_faceNeighbors;
 
@@ -179,9 +180,10 @@ float influence_func(float x)
 // Intensity difference between surface normals ***
 float intensity_diff(glm::vec3 u, glm::vec3 v)
 {
-	return glm::dot(v, v - u);
+	return glm::dot(u, u - v);
 }
 
+/*
 pair<glm::vec3, float> doFilter(Mesh *mesh, int i, int j, set<int> duplicates)
 {
 	// First, check if the face has already been visited
@@ -218,7 +220,7 @@ pair<glm::vec3, float> doFilter(Mesh *mesh, int i, int j, set<int> duplicates)
 	// Calculate for each neighbor and add to result
 	for (int k = 0; k < fj.length(); k++)
 	{
-		set<int> n = LSE_faceNeighbors[fj[k]];
+		set<int> n = neighborFaces[fj[k]];
 		neighbors.insert(n.begin(), n.end());
 	}
 	vector<int> facesToDo(neighbors.size(), -1);
@@ -238,6 +240,7 @@ pair<glm::vec3, float> doFilter(Mesh *mesh, int i, int j, set<int> duplicates)
 	}
 	return result;
 }
+//*/
 
 // Apply bilateral filter to smooth surface normals ***
 void bilateral_filter(Mesh *mesh)
@@ -247,16 +250,62 @@ void bilateral_filter(Mesh *mesh)
 
 	for (int i = 0; i < mesh->nf; i++)
 	{
-		//printf("BF: Face %d\n", i);
 		// Get normal and centroid of face i
 		glm::vec3 ni = mesh->normal[i];
 		glm::vec3 ci = mesh->centroid[i];
 
-		// Get sum of filtering equation
-		pair<glm::vec3, float> result = doFilter(mesh, i, i, {});
+		vector<int> toVisit;
+		unordered_set<int> visitedVertices;
+		for (int v = 0; v < mesh->face[i].length(); v++)
+		{
+			for (int f : neighborFaces[mesh->face[i][v]])
+			{
+				if (f != i && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
+				{
+					toVisit.push_back(f);
+				}
+			}
+		}
+
+		glm::vec3 top(0.0f);
+		float bottom = 0.0f;
+
+		for (int j = 0; j < toVisit.size(); j++)
+		{
+			glm::ivec3 fj = mesh->face[toVisit[j]];
+
+			// Get normal and centroid of face j
+			glm::vec3 nj = mesh->normal[toVisit[j]];
+			glm::vec3 cj = mesh->centroid[toVisit[j]];
+			float distance = glm::distance(cj, ci);
+			if (distance < ceil(2 * sigC))
+			{
+				for (int v = 0; v < fj.length(); v++)
+				{
+					if (visitedVertices.count(fj[v]) == 0)
+					{
+						visitedVertices.insert(fj[v]);
+						for (int f : neighborFaces[fj[v]])
+						{
+							if (f != i && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
+							{
+								toVisit.push_back(f);
+							}
+						}
+					}
+				}
+
+				// Calculate Ws and Wc
+				float wc = smoothing_func(distance);
+				float ws = influence_func(intensity_diff(ni, nj));
+
+				top += wc * ws * nj;
+				bottom += wc * ws;
+			}
+		}
 
 		// Normalize smoothed normal
-		glm::vec3 smoothedNormal = result.first / result.second;
+		glm::vec3 smoothedNormal = top / bottom;
 		smoothedNormal = glm::normalize(smoothedNormal);
 		newNormals[i] = smoothedNormal;
 	}
@@ -277,10 +326,10 @@ void lse_correction(Mesh *mesh)
 	{
 		//printf("LSE: Vertex %d\n", i);
 		glm::vec3 sum;
-		for (int j : LSE_vertexNeighbors[i])
+		for (int j : neighborVertices[i])
 		{
 			vector<int> edgeNeighbors(2);
-			set_intersection(LSE_faceNeighbors[i].begin(), LSE_faceNeighbors[i].end(), LSE_faceNeighbors[j].begin(), LSE_faceNeighbors[j].end(), edgeNeighbors.begin());
+			set_intersection(neighborFaces[i].begin(), neighborFaces[i].end(), neighborFaces[j].begin(), neighborFaces[j].end(), edgeNeighbors.begin());
 			edgeNeighbors.shrink_to_fit();
 			if (edgeNeighbors.size() != 2)
 			{
@@ -332,22 +381,22 @@ void smooth(Mesh *mesh) {
 // TODO: Adds neighbors of each point ***
 void addVertexNeighbors(Mesh *mesh, int a, int b, int c)
 {
-	LSE_vertexNeighbors[a].insert(b);
-	LSE_vertexNeighbors[a].insert(c);
+	neighborVertices[a].insert(b);
+	neighborVertices[a].insert(c);
 
-	LSE_vertexNeighbors[b].insert(a);
-	LSE_vertexNeighbors[b].insert(c);
+	neighborVertices[b].insert(a);
+	neighborVertices[b].insert(c);
 
-	LSE_vertexNeighbors[c].insert(a);
-	LSE_vertexNeighbors[c].insert(b);
+	neighborVertices[c].insert(a);
+	neighborVertices[c].insert(b);
 }
 
 // Add neighboring face normal to vertex
 void addNeighborNormals(int n, int a, int b, int c)
 {
-	LSE_faceNeighbors[a].insert(n);
-	LSE_faceNeighbors[b].insert(n);
-	LSE_faceNeighbors[c].insert(n);
+	neighborFaces[a].insert(n);
+	neighborFaces[b].insert(n);
+	neighborFaces[c].insert(n);
 }
 
 // Calculate surface normals with glm functions ***
@@ -400,8 +449,8 @@ Mesh* readPolygon()
 	surfmesh->centroid = (glm::vec3*)malloc(sizeof(glm::vec3) * surfmesh->nf);
 
 	// Allocate space for the neighborhoods
-	LSE_vertexNeighbors.resize(surfmesh->nv);
-	LSE_faceNeighbors.resize(surfmesh->nv);
+	neighborVertices.resize(surfmesh->nv);
+	neighborFaces.resize(surfmesh->nv);
 
 	// TODO: Figure out how to get neighboring faces of edges
 	BF_faceNeighbors.resize(surfmesh->nf);
@@ -707,7 +756,7 @@ void idle()
 	glutPostRedisplay();
 }
 
-int main(int argc, char *argv[])
+void doSmooth()
 {
 	getRadius(surfmesh);
 
@@ -718,13 +767,18 @@ int main(int argc, char *argv[])
 	chrono::time_point<chrono::system_clock> end = chrono::system_clock::now();
 	chrono::duration<double> duration2 = end - start;
 	printf("Total duration = %f\n", duration2);
-	
+
 	//*
 	// Write the smoothed mesh to OFF file
 	string meshPathOut(outputPath);
 	meshPathOut.append("smooth.off");
 	writeMeshToFile(surfmesh, meshPathOut.c_str());
 	//*/
+}
+
+int main(int argc, char *argv[])
+{
+	thread t1(doSmooth);
 
 	glutInit(&argc, argv);
 
@@ -733,7 +787,7 @@ int main(int argc, char *argv[])
 
 	glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
 
-	win = glutCreateWindow("3D Polygon");
+	win = glutCreateWindow("Feature Preserving Mesh Denoising");
 	createMenu();
 
 	glutDisplayFunc(display);
@@ -758,5 +812,7 @@ int main(int argc, char *argv[])
 	std::free(surfmesh->normal);
 	std::free(surfmesh->centroid);
 	std::free(surfmesh);
+
+	t1.join();
 	return 0;
 }
