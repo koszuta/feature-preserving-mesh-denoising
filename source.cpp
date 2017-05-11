@@ -13,13 +13,14 @@
 #include <vector>
 #include <set>
 #include <unordered_set>
-#include <map>
+#include <unordered_map>
 #include <deque>
 #include <algorithm>
 #include <climits>
 #include <chrono>
 #include <fstream>
 #include <thread>
+#include <mutex>
 
 // GLM header file ***
 #include <glm/glm.hpp>
@@ -80,6 +81,9 @@ float xdiff = 0.0f;
 float ydiff = 0.0f;
 
 
+mutex mtx;
+
+
 enum transformation
 {
 	ROTATE,
@@ -102,7 +106,10 @@ struct Mesh {
 static vector<set<int>> vertexNeighborVertices;
 static vector<set<int>> vertexNeighborFaces;
 static vector<unordered_set<int>> vertexRadiusFaces;
-static vector<map<int, vector<int>>> edgeNeighborFaces;
+static vector<unordered_map<int, vector<int>>> edgeNeighborFaces;
+
+static bool* isVertexVisited;
+static bool* isFaceVisited;
 
 
 // Intensity difference between surface normals ***
@@ -118,10 +125,12 @@ void getRadius(Mesh* mesh)
 	while (strcmp(temp.c_str(), "y"))
 	{
 		temp = "";
+		mtx.lock();
+		userFace = -1;
+		mtx.unlock();
 		cout << "Enter face at center of area expected to be smooth, in range [0, " << mesh->nf << ")" << endl;
 
 		int face;
-		cin.clear();
 		if (!(cin >> face) || 0 > face || face > mesh->nf-1)
 		{
 			cout << "OUT OF RANGE" << endl;
@@ -129,8 +138,9 @@ void getRadius(Mesh* mesh)
 			cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 			continue;
 		}
-
+		mtx.lock();
 		userFace = face;
+		mtx.unlock();
 		cout << "Use face " << face << "? (y/n)" << endl;
 		cin >> temp;
 	}
@@ -139,11 +149,13 @@ void getRadius(Mesh* mesh)
 	while (strcmp(temp.c_str(), "y"))
 	{
 		temp = "";
+		sigC = 0.0f;
 		cout << "Enter radius of the smooth area..." << endl;
+		mtx.lock();
 		facesWithinRadius.clear();
+		mtx.unlock();
 
 		float radius;
-		cin.clear();
 		if (!(cin >> radius) || radius <= 0)
 		{
 			cout << "RADIUS MUST BE > 0" << endl;
@@ -151,12 +163,16 @@ void getRadius(Mesh* mesh)
 			cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 			continue;
 		}
+		mtx.lock();
 		sigC = radius;
+		mtx.unlock();
 		for (int i = 0; i < mesh->nf; i++)
 		{
 			if (i != userFace && sigC > glm::distance(mesh->centroid[i], mesh->centroid[userFace]))
 			{
+				mtx.lock();
 				facesWithinRadius.insert(i);
+				mtx.unlock();
 			}
 		}
 		cout << "Use radius " << radius << "? (y/n)" << endl;
@@ -214,7 +230,9 @@ void bilateral_filter(Mesh *mesh)
 	}
 
 	// Copy new array of normals to mesh array of normals
+	mtx.lock();
 	memcpy(mesh->normal, newNormals, sizeof(glm::vec3) * mesh->nf);
+	mtx.unlock();
 	free(newNormals);
 }
 
@@ -242,106 +260,10 @@ void lse_correction(Mesh *mesh)
 	}
 
 	// Copy new vertices to mesh vertices
+	mtx.lock();
 	memcpy(mesh->vertex, newVertices, sizeof(glm::vec3) * mesh->nv);
+	mtx.unlock();
 	free(newVertices);
-}
-
-
-void getRadiusNeighbors(Mesh *mesh, float radius)
-{
-	float sum = 0.0f;
-	int N = 0;
-	for (int fi = 0; fi < mesh->nf; fi++)
-	{
-		deque<int> toVisit;
-		toVisit.push_back(fi);
-		unordered_set<int> visitedVertices;
-		for (int j = 0; j < toVisit.size(); j++)
-		{
-			int fj = toVisit[j];
-
-			// Get distance between face centroid i and j
-			float distance = glm::distance(mesh->centroid[fj], mesh->centroid[fi]);
-			if (distance < ceil(2 * radius))
-			{
-				if (fi != fj)
-				{
-					vertexRadiusFaces[fi].insert(fj);
-
-					// Accumulate SD if current face is the user selected face
-					// and neighboring face is within user selected radius
-					if (fi == userFace && distance < radius)
-					{
-						printf("Within radius sigC\n");
-						sum += pow(intensity_diff(mesh->normal[fi], mesh->normal[fj]), 2);
-						N++;
-					}
-				}
-
-				for (int v = 0; v < mesh->face[fj].length(); v++)
-				{
-					if (visitedVertices.insert(mesh->face[fj][v]).second)
-					{
-						for (int neighborFace : vertexNeighborFaces[mesh->face[fj][v]])
-						{
-							if (fi != neighborFace && find(toVisit.begin(), toVisit.end(), neighborFace) == toVisit.end())
-							{
-								toVisit.push_back(neighborFace);
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	sigS = sqrt(sum / N);
-	printf("\nstandard deviation = %f\n\n", sigS);
-}
-
-
-void getRadiusNeighborsBrute(Mesh *mesh, float radius)
-{
-	float sum = 0.0f;
-	int N = 0;
-	for (int fi = 0; fi < mesh->nf; fi++)
-	{
-		for (int fj = fi + 1; fj < mesh->nf; fj++)
-		{
-			// Get distance between face centroid i and j
-			float distance = glm::distance(mesh->centroid[fj], mesh->centroid[fi]);
-			if (distance < ceil(2 * radius))
-			{
-				vertexRadiusFaces[fi].insert(fj);
-				vertexRadiusFaces[fj].insert(fi);
-
-				// Accumulate SD if current face is the user selected face
-				// and neighboring face is within user selected radius
-				if (fi == userFace && distance < radius)
-				{
-					printf("Within radius sigC\n");
-					sum += pow(intensity_diff(mesh->normal[fi], mesh->normal[fj]), 2);
-					N++;
-				}
-			}
-		}
-	}
-	sigS = sqrt(sum / N);
-	printf("\nstandard deviation = %f\n\n", sigS);
-}
-
-
-void getEdgeNeighbors(Mesh *mesh)
-{
-	for (int vi = 0; vi < mesh->nv; vi++)
-	{
-		for (int vj : vertexNeighborVertices[vi])
-		{
-			vector<int> neighborFaces(2, -1);
-			set_intersection(vertexNeighborFaces[vi].begin(), vertexNeighborFaces[vi].end(), vertexNeighborFaces[vj].begin(), vertexNeighborFaces[vj].end(), neighborFaces.begin());
-			edgeNeighborFaces[vi].emplace(vj, neighborFaces);
-			if (neighborFaces[0] == -1 || neighborFaces[1] == -1) printf("Bad edge neighbors\n");
-		}
-	}
 }
 
 
@@ -373,6 +295,96 @@ void smooth(Mesh *mesh)
 }
 
 
+void getRadiusNeighbors(Mesh *mesh, float radius)
+{
+	float sum = 0.0f;
+	int N = 0;
+	for (int fi = 0; fi < mesh->nf; fi++)
+	{
+		deque<int> facesToVisit;
+
+		// Initially add center face to list
+		facesToVisit.push_back(fi);
+		isFaceVisited[fi] = true;
+
+		for (int j = 0; j < facesToVisit.size(); j++)
+		{
+			int fj = facesToVisit[j];
+
+			// Get distance between face centroid i and j
+			float distance = glm::distance(mesh->centroid[fj], mesh->centroid[fi]);
+			if (distance < ceil(2 * radius))
+			{
+				if (fi != fj)
+				{
+					// Add neighbor to center face's list
+					vertexRadiusFaces[fi].insert(fj);
+
+					// Accumulate SD if current face is the user selected face
+					// and neighboring face is within user selected radius
+					if (fi == userFace && distance < radius)
+					{
+						sum += pow(intensity_diff(mesh->normal[fi], mesh->normal[fj]), 2);
+						N++;
+					}
+				}
+
+				for (int v = 0; v < mesh->face[fj].length(); v++)
+				{
+					int vertex = mesh->face[fj][v];
+
+					if (!isVertexVisited[vertex])
+					{
+						isVertexVisited[vertex] = true;
+						for (int neighborFace : vertexNeighborFaces[vertex])
+						{
+							if (fi != neighborFace && !isFaceVisited[neighborFace])
+							{
+								facesToVisit.push_back(neighborFace);
+								isFaceVisited[neighborFace] = true;
+							}
+						}
+					}
+				}
+			}
+		}
+		for (int f = 0; f < mesh->nf; f++)
+		{
+			isFaceVisited[f] = false;
+		}
+		for (int v = 0; v < mesh->nv; v++)
+		{
+			isVertexVisited[v] = false;
+		}
+	}
+	sigS = sqrt(sum / N);
+	printf("\nstandard deviation = %f\n\n", sigS);
+}
+
+
+// Writes mesh to a file specified by filepath
+void writeMeshToFile(Mesh *mesh, const char *filepath)
+{
+	printf("Writing mesh to file...\n");
+	FILE* file = fopen(filepath, "w");
+
+	fprintf(file, "OFF\n");
+	fprintf(file, "%d   %d   %d\n", mesh->nv, mesh->nf, mesh->ne);
+
+	for (int i = 0; i < mesh->nv; i++)
+	{
+		fprintf(file, "%f   %f   %f\n", mesh->vertex[i].x, mesh->vertex[i].y, mesh->vertex[i].z);
+	}
+	for (int j = 0; j < mesh->nf; j++)
+	{
+		fprintf(file, "3 %d %d %d\n", mesh->face[j].x, mesh->face[j].y, mesh->face[j].z);
+	}
+
+	fclose(file);
+	printf("Done writing mesh to file.\n");
+}
+
+
 void doSmooth(Mesh *mesh)
 {
 	chrono::time_point<chrono::system_clock> totalStart;
@@ -384,14 +396,9 @@ void doSmooth(Mesh *mesh)
 	totalStart = chrono::system_clock::now();
 
 	start = chrono::system_clock::now();
-	getRadiusNeighborsBrute(mesh, sigC);
+	getRadiusNeighbors(mesh, sigC);
 	duration = chrono::system_clock::now() - start;
 	printf("Radius neighbors duration = %f seconds\n", duration);
-
-	start = chrono::system_clock::now();
-	getEdgeNeighbors(mesh);
-	duration = chrono::system_clock::now() - start;
-	printf("Edge neighbors duration = %f seconds\n", duration);
 
 	start = chrono::system_clock::now();
 	smooth(mesh);
@@ -400,6 +407,9 @@ void doSmooth(Mesh *mesh)
 
 	duration = chrono::system_clock::now() - totalStart;
 	printf("Total duration = %f seconds\n", duration);
+
+	// Write the smoothed mesh to OFF file
+	writeMeshToFile(mesh, "smooth.off");
 }
 
 
@@ -427,7 +437,7 @@ void addNeighboringFaces(int n, int a, int b, int c)
 
 
 // Calculate surface normals with glm functions ***
-glm::vec3 normal_from_vertices(Mesh *mesh, int a, int b, int c)
+glm::vec3 normalFromVertices(Mesh *mesh, int a, int b, int c)
 {
 	glm::vec3 u = mesh->vertex[a] - mesh->vertex[b];
 	glm::vec3 v = mesh->vertex[c] - mesh->vertex[b];
@@ -436,7 +446,7 @@ glm::vec3 normal_from_vertices(Mesh *mesh, int a, int b, int c)
 
 
 // Calculate centroids of triangle face ***
-glm::vec3 calc_centroid(Mesh *mesh, int a, int b, int c)
+glm::vec3 calcCentroid(Mesh *mesh, int a, int b, int c)
 {
 	return (mesh->vertex[a] + mesh->vertex[b] + mesh->vertex[c]) / 3.0f;
 }
@@ -482,6 +492,12 @@ Mesh* readPolygon()
 	vertexRadiusFaces.resize(surfmesh->nf);
 	edgeNeighborFaces.resize(surfmesh->nv);
 
+	isFaceVisited = (bool*)malloc(sizeof(bool) * surfmesh->nf);
+	for (int f = 0; f < surfmesh->nf; f++) isFaceVisited[f] = false;
+
+	isVertexVisited = (bool*)malloc(sizeof(bool) * surfmesh->nv);
+	for (int v = 0; v < surfmesh->nv; v++) isVertexVisited[v] = false;
+
 	for (n = 0; n < surfmesh->nv; n++) {
 		fscanf(fin, "%f %f %f\n", &x, &y, &z);
 		surfmesh->vertex[n].x = x;
@@ -500,13 +516,25 @@ Mesh* readPolygon()
 		// Add normal neighbors for each vertex
 		addNeighboringFaces(n, b, c, d);
 		// Calculate face surface normal ***
-		surfmesh->normal[n] = normal_from_vertices(surfmesh, b, c, d);
+		surfmesh->normal[n] = normalFromVertices(surfmesh, b, c, d);
 		// Calculate triangle centroid ***
-		surfmesh->centroid[n] = calc_centroid(surfmesh, b, c, d);
+		surfmesh->centroid[n] = calcCentroid(surfmesh, b, c, d);
 
 		if (a != 3)
 			printf("Errors: reading surfmesh .... \n");
 	}
+
+	for (int vi = 0; vi < surfmesh->nv; vi++)
+	{
+		for (int vj : vertexNeighborVertices[vi])
+		{
+			vector<int> neighborFaces(2, -1);
+			set_intersection(vertexNeighborFaces[vi].begin(), vertexNeighborFaces[vi].end(), vertexNeighborFaces[vj].begin(), vertexNeighborFaces[vj].end(), neighborFaces.begin());
+			edgeNeighborFaces[vi].emplace(vj, neighborFaces);
+			if (neighborFaces[0] == -1 || neighborFaces[1] == -1) printf("Bad edge neighbors\n");
+		}
+	}
+
 	fclose(fin);
 
 	printf("Done reading mesh file...\n");
@@ -569,6 +597,7 @@ void draw()
 	for (int i = 0; i < surfmesh->nf; ++i) {
 		// Use face's surface normal for lighting ***
 		glNormal3f(surfmesh->normal[i].x, surfmesh->normal[i].y, surfmesh->normal[i].z);
+		mtx.lock();
 		if (i == userFace)
 		{
 			const GLfloat HIGHLIGHT[3] = { 1.0f - PURPLE[0], 1.0f - PURPLE[1], 1.0f - PURPLE[2] };
@@ -582,6 +611,7 @@ void draw()
 		{
 			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, PURPLE);
 		}
+		mtx.unlock();
 		glBegin(GL_TRIANGLES);
 			glVertex3f(surfmesh->vertex[surfmesh->face[i].x].x, surfmesh->vertex[surfmesh->face[i].x].y, surfmesh->vertex[surfmesh->face[i].x].z);
 			glVertex3f(surfmesh->vertex[surfmesh->face[i].y].x, surfmesh->vertex[surfmesh->face[i].y].y, surfmesh->vertex[surfmesh->face[i].y].z);
@@ -604,7 +634,6 @@ void draw()
 			glEnd();
 		}
 		glDisable(GL_POLYGON_OFFSET_FILL);
-
 	}
 }
 
@@ -754,28 +783,6 @@ void mouseMotion(int x, int y)
 
 }
 
-// Writes mesh to a file specified by filepath
-void writeMeshToFile(Mesh *mesh, const char *filepath)
-{
-	printf("Writing mesh to file...\n");
-	FILE* file = fopen(filepath, "w");
-
-	fprintf(file, "OFF\n");
-	fprintf(file, "%d   %d   %d\n", mesh->nv, mesh->nf, mesh->ne);
-
-	for (int i = 0; i < mesh->nv; i++)
-	{
-		fprintf(file, "%f   %f   %f\n", mesh->vertex[i].x, mesh->vertex[i].y, mesh->vertex[i].z);
-	}
-	for (int j = 0; j < mesh->nf; j++)
-	{
-		fprintf(file, "3 %d %d %d\n", mesh->face[j].x, mesh->face[j].y, mesh->face[j].z);
-	}
-
-	fclose(file);
-	printf("Done writing mesh to file.\n");
-}
-
 void idle()
 {
 	if (!mouseDown)
@@ -789,11 +796,8 @@ void idle()
 
 int main(int argc, char *argv[])
 {
-	//thread t1(doSmooth);
-	doSmooth(surfmesh);
-
-	// Write the smoothed mesh to OFF file
-	writeMeshToFile(surfmesh, "smooth.off");
+	thread t1(doSmooth, surfmesh);
+	//doSmooth(surfmesh);
 
 	glutInit(&argc, argv);
 
@@ -828,6 +832,6 @@ int main(int argc, char *argv[])
 	std::free(surfmesh->centroid);
 	std::free(surfmesh);
 
-	//t1.join();
+	t1.join();
 	return 0;
 }
