@@ -312,6 +312,7 @@ void getRadiusNeighborsBrute(Mesh *mesh, float radius)
 			if (distance < ceil(2 * radius))
 			{
 				vertexRadiusFaces[fi].insert(fj);
+				vertexRadiusFaces[fj].insert(fi);
 
 				// Accumulate SD if current face is the user selected face
 				// and neighboring face is within user selected radius
@@ -383,7 +384,7 @@ void doSmooth(Mesh *mesh)
 	totalStart = chrono::system_clock::now();
 
 	start = chrono::system_clock::now();
-	getRadiusNeighbors(mesh, sigC);
+	getRadiusNeighborsBrute(mesh, sigC);
 	duration = chrono::system_clock::now() - start;
 	printf("Radius neighbors duration = %f seconds\n", duration);
 
