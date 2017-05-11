@@ -13,6 +13,8 @@
 #include <vector>
 #include <set>
 #include <unordered_set>
+#include <map>
+#include <deque>
 #include <algorithm>
 #include <climits>
 #include <chrono>
@@ -97,10 +99,10 @@ struct Mesh {
 };
 
 // List of vertex neighbors
-static vector<set<int>> neighborVertices;
-static vector<set<int>> neighborFaces;
-
-static vector<set<int>> BF_faceNeighbors;
+static vector<set<int>> vertexNeighborVertices;
+static vector<set<int>> vertexNeighborFaces;
+static vector<unordered_set<int>> vertexRadiusFaces;
+static vector<map<int, vector<int>>> edgeNeighborFaces;
 
 
 // Intensity difference between surface normals ***
@@ -162,58 +164,6 @@ void getRadius(Mesh* mesh)
 	}
 
 	printf("\nface = %d, radius = %f\n", userFace, sigC);
-
-	vector<int> toVisit;
-	unordered_set<int> visitedVertices;
-	glm::ivec3 fCenter = mesh->face[userFace];
-	glm::vec3 nCenter = mesh->normal[userFace];
-	glm::vec3 cCenter = mesh->centroid[userFace];
-	for (int v = 0; v < fCenter.length(); v++)
-	{
-		visitedVertices.insert(fCenter[v]);
-		for (int f : neighborFaces[fCenter[v]])
-		{
-			if (f != userFace && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
-			{
-				toVisit.push_back(f);
-			}
-		}
-	}
-
-	int N = 0;
-	float sum = 0.0f;
-
-	for (int j = 0; j < toVisit.size(); j++)
-	{
-		glm::ivec3 fj = mesh->face[toVisit[j]];
-
-		// Get normal and centroid of face j
-		glm::vec3 nj = mesh->normal[toVisit[j]];
-		glm::vec3 cj = mesh->centroid[toVisit[j]];
-		float distance = glm::distance(cj, cCenter);
-		if (distance < sigC)
-		{
-			for (int v = 0; v < fj.length(); v++)
-			{
-				if (visitedVertices.insert(fj[v]).second)
-				{
-					for (int f : neighborFaces[fj[v]])
-					{
-						if (f != userFace && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
-						{
-							toVisit.push_back(f);
-						}
-					}
-				}
-			}
-			
-			// Add intensity difference between normal j and center
-			sum += pow(intensity_diff(nCenter, nj), 2);
-			N++;
-		}
-	}
-	sigS = sqrt(sum / N);
-	printf("standard deviation = %f\n", sigS);
 }
 
 // Spatial smoothing function ***
@@ -240,55 +190,21 @@ void bilateral_filter(Mesh *mesh)
 		glm::vec3 ni = mesh->normal[i];
 		glm::vec3 ci = mesh->centroid[i];
 
-		vector<int> toVisit;
-		unordered_set<int> visitedVertices;
-		glm::ivec3 fi = mesh->face[i];
-		for (int v = 0; v < fi.length(); v++)
-		{
-			visitedVertices.insert(fi[v]);
-			for (int f : neighborFaces[fi[v]])
-			{
-				if (f != i && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
-				{
-					toVisit.push_back(f);
-				}
-			}
-		}
-
 		glm::vec3 top(0.0f);
 		float bottom = 0.0f;
 
-		for (int j = 0; j < toVisit.size(); j++)
+		for (const auto& j : vertexRadiusFaces[i])
 		{
-			glm::ivec3 fj = mesh->face[toVisit[j]];
-
 			// Get normal and centroid of face j
-			glm::vec3 nj = mesh->normal[toVisit[j]];
-			glm::vec3 cj = mesh->centroid[toVisit[j]];
-			float distance = glm::distance(cj, ci);
-			if (distance < ceil(2 * sigC))
-			{
-				for (int v = 0; v < fj.length(); v++)
-				{
-					if (visitedVertices.insert(fj[v]).second)
-					{
-						for (int f : neighborFaces[fj[v]])
-						{
-							if (f != i && find(toVisit.begin(), toVisit.end(), f) == toVisit.end())
-							{
-								toVisit.push_back(f);
-							}
-						}
-					}
-				}
+			glm::vec3 nj = mesh->normal[j];
+			glm::vec3 cj = mesh->centroid[j];
 
-				// Calculate Ws and Wc
-				float wc = smoothing_func(distance);
-				float ws = influence_func(intensity_diff(ni, nj));
+			// Calculate Ws and Wc
+			float wc = smoothing_func(glm::distance(cj, ci));
+			float ws = influence_func(intensity_diff(ni, nj));
 
-				top += wc * ws * nj;
-				bottom += wc * ws;
-			}
+			top += wc * ws * nj;
+			bottom += wc * ws;
 		}
 
 		// Normalize smoothed normal
@@ -298,8 +214,6 @@ void bilateral_filter(Mesh *mesh)
 	}
 
 	// Copy new array of normals to mesh array of normals
-	// TODO: Make sure this works
-	printf("BF: Copying new normals to mesh\n");
 	memcpy(mesh->normal, newNormals, sizeof(glm::vec3) * mesh->nf);
 	free(newNormals);
 }
@@ -313,17 +227,12 @@ void lse_correction(Mesh *mesh)
 	{
 		//printf("LSE: Vertex %d\n", i);
 		glm::vec3 sum;
-		for (int j : neighborVertices[i])
+		for (int j : vertexNeighborVertices[i])
 		{
 			vector<int> edgeNeighbors(2);
-			set_intersection(neighborFaces[i].begin(), neighborFaces[i].end(), neighborFaces[j].begin(), neighborFaces[j].end(), edgeNeighbors.begin());
-			edgeNeighbors.shrink_to_fit();
-			if (edgeNeighbors.size() != 2)
-			{
-				printf("Got %d edge neighbors, should be 2\n", edgeNeighbors.size());
-			}
+			//set_intersection(vertexNeighborFaces[i].begin(), vertexNeighborFaces[i].end(), vertexNeighborFaces[j].begin(), vertexNeighborFaces[j].end(), edgeNeighbors.begin());
 			glm::vec3 sum2;
-			for (int f : edgeNeighbors)
+			for (int f = 0; f < edgeNeighborFaces[i].size(); f++)
 			{
 				sum2 += outerProduct(mesh->normal[f], mesh->normal[f]) * (mesh->vertex[j] - mesh->vertex[i]);
 			}
@@ -331,16 +240,115 @@ void lse_correction(Mesh *mesh)
 		}
 		newVertices[i] = mesh->vertex[i] + LAMBDA * sum;
 	}
-	// TODO: Make sure this works
+
 	// Copy new vertices to mesh vertices
-	printf("LSE: Copying new vertices to mesh\n");
 	memcpy(mesh->vertex, newVertices, sizeof(glm::vec3) * mesh->nv);
 	free(newVertices);
 }
 
-void smooth(Mesh *mesh) {
-	chrono::time_point<chrono::system_clock> start, end;
+
+void getRadiusNeighbors(Mesh *mesh, float radius)
+{
+	float sum = 0.0f;
+	int N = 0;
+	for (int fi = 0; fi < mesh->nf; fi++)
+	{
+		deque<int> toVisit;
+		toVisit.push_back(fi);
+		unordered_set<int> visitedVertices;
+		for (int j = 0; j < toVisit.size(); j++)
+		{
+			int fj = toVisit[j];
+
+			// Get distance between face centroid i and j
+			float distance = glm::distance(mesh->centroid[fj], mesh->centroid[fi]);
+			if (distance < ceil(2 * radius))
+			{
+				if (fi != fj)
+				{
+					vertexRadiusFaces[fi].insert(fj);
+
+					// Accumulate SD if current face is the user selected face
+					// and neighboring face is within user selected radius
+					if (fi == userFace && distance < radius)
+					{
+						printf("Within radius sigC\n");
+						sum += pow(intensity_diff(mesh->normal[fi], mesh->normal[fj]), 2);
+						N++;
+					}
+				}
+
+				for (int v = 0; v < mesh->face[fj].length(); v++)
+				{
+					if (visitedVertices.insert(mesh->face[fj][v]).second)
+					{
+						for (int neighborFace : vertexNeighborFaces[mesh->face[fj][v]])
+						{
+							if (fi != neighborFace && find(toVisit.begin(), toVisit.end(), neighborFace) == toVisit.end())
+							{
+								toVisit.push_back(neighborFace);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	sigS = sqrt(sum / N);
+	printf("\nstandard deviation = %f\n\n", sigS);
+}
+
+
+void getRadiusNeighborsBrute(Mesh *mesh, float radius)
+{
+	float sum = 0.0f;
+	int N = 0;
+	for (int fi = 0; fi < mesh->nf; fi++)
+	{
+		for (int fj = fi + 1; fj < mesh->nf; fj++)
+		{
+			// Get distance between face centroid i and j
+			float distance = glm::distance(mesh->centroid[fj], mesh->centroid[fi]);
+			if (distance < ceil(2 * radius))
+			{
+				vertexRadiusFaces[fi].insert(fj);
+
+				// Accumulate SD if current face is the user selected face
+				// and neighboring face is within user selected radius
+				if (fi == userFace && distance < radius)
+				{
+					printf("Within radius sigC\n");
+					sum += pow(intensity_diff(mesh->normal[fi], mesh->normal[fj]), 2);
+					N++;
+				}
+			}
+		}
+	}
+	sigS = sqrt(sum / N);
+	printf("\nstandard deviation = %f\n\n", sigS);
+}
+
+
+void getEdgeNeighbors(Mesh *mesh)
+{
+	for (int vi = 0; vi < mesh->nv; vi++)
+	{
+		for (int vj : vertexNeighborVertices[vi])
+		{
+			vector<int> neighborFaces(2, -1);
+			set_intersection(vertexNeighborFaces[vi].begin(), vertexNeighborFaces[vi].end(), vertexNeighborFaces[vj].begin(), vertexNeighborFaces[vj].end(), neighborFaces.begin());
+			edgeNeighborFaces[vi].emplace(vj, neighborFaces);
+			if (neighborFaces[0] == -1 || neighborFaces[1] == -1) printf("Bad edge neighbors\n");
+		}
+	}
+}
+
+
+void smooth(Mesh *mesh)
+{
+	chrono::time_point<chrono::system_clock> start;
 	chrono::duration<double> duration;
+
 	// Smooth the surface normals ***
 	for (int i = 0; i < NF; i++)
 	{
@@ -348,8 +356,7 @@ void smooth(Mesh *mesh) {
 
 		bilateral_filter(mesh);
 
-		end = chrono::system_clock::now();
-		duration = end - start;
+		duration = chrono::system_clock::now() - start;
 		printf("BF duration = %f\n", duration);
 	}
 	// Adjust the vertices ***
@@ -359,43 +366,76 @@ void smooth(Mesh *mesh) {
 
 		lse_correction(mesh);
 
-		end = chrono::system_clock::now();
-		duration = end - start;
+		duration = chrono::system_clock::now() - start;
 		printf("LSE duration = %f\n", duration);
 	}
 }
 
-// TODO: Adds neighbors of each point ***
-void addVertexNeighbors(int a, int b, int c)
+
+void doSmooth(Mesh *mesh)
 {
-	neighborVertices[a].insert(b);
-	neighborVertices[a].insert(c);
+	chrono::time_point<chrono::system_clock> totalStart;
+	chrono::time_point<chrono::system_clock> start;
+	chrono::duration<double> duration;
 
-	neighborVertices[b].insert(a);
-	neighborVertices[b].insert(c);
+	getRadius(mesh);
 
-	neighborVertices[c].insert(a);
-	neighborVertices[c].insert(b);
+	totalStart = chrono::system_clock::now();
+
+	start = chrono::system_clock::now();
+	getRadiusNeighbors(mesh, sigC);
+	duration = chrono::system_clock::now() - start;
+	printf("Radius neighbors duration = %f seconds\n", duration);
+
+	start = chrono::system_clock::now();
+	getEdgeNeighbors(mesh);
+	duration = chrono::system_clock::now() - start;
+	printf("Edge neighbors duration = %f seconds\n", duration);
+
+	start = chrono::system_clock::now();
+	smooth(mesh);
+	duration = chrono::system_clock::now() - start;
+	printf("Smoothing duration = %f seconds\n", duration);
+
+	duration = chrono::system_clock::now() - totalStart;
+	printf("Total duration = %f seconds\n", duration);
 }
 
-// Add neighboring face normal to vertex
-void addNeighborNormals(int n, int a, int b, int c)
+
+// Add vertex neighbors of face vertices
+void addNeighboringVertices(int a, int b, int c)
 {
-	neighborFaces[a].insert(n);
-	neighborFaces[b].insert(n);
-	neighborFaces[c].insert(n);
+	vertexNeighborVertices[a].insert(b);
+	vertexNeighborVertices[a].insert(c);
+
+	vertexNeighborVertices[b].insert(a);
+	vertexNeighborVertices[b].insert(c);
+
+	vertexNeighborVertices[c].insert(a);
+	vertexNeighborVertices[c].insert(b);
 }
+
+
+// Add face neighbor of face vertices
+void addNeighboringFaces(int n, int a, int b, int c)
+{
+	vertexNeighborFaces[a].insert(n);
+	vertexNeighborFaces[b].insert(n);
+	vertexNeighborFaces[c].insert(n);
+}
+
 
 // Calculate surface normals with glm functions ***
-glm::vec3 addNormal(Mesh *mesh, int a, int b, int c)
+glm::vec3 normal_from_vertices(Mesh *mesh, int a, int b, int c)
 {
 	glm::vec3 u = mesh->vertex[a] - mesh->vertex[b];
 	glm::vec3 v = mesh->vertex[c] - mesh->vertex[b];
 	return glm::normalize(glm::cross(v, u));
 }
 
+
 // Calculate centroids of triangle face ***
-glm::vec3 addCentroid(Mesh *mesh, int a, int b, int c)
+glm::vec3 calc_centroid(Mesh *mesh, int a, int b, int c)
 {
 	return (mesh->vertex[a] + mesh->vertex[b] + mesh->vertex[c]) / 3.0f;
 }
@@ -436,11 +476,10 @@ Mesh* readPolygon()
 	surfmesh->centroid = (glm::vec3*)malloc(sizeof(glm::vec3) * surfmesh->nf);
 
 	// Allocate space for the neighborhoods
-	neighborVertices.resize(surfmesh->nv);
-	neighborFaces.resize(surfmesh->nv);
-
-	// TODO: Figure out how to get neighboring faces of edges
-	BF_faceNeighbors.resize(surfmesh->nf);
+	vertexNeighborVertices.resize(surfmesh->nv);
+	vertexNeighborFaces.resize(surfmesh->nv);
+	vertexRadiusFaces.resize(surfmesh->nf);
+	edgeNeighborFaces.resize(surfmesh->nv);
 
 	for (n = 0; n < surfmesh->nv; n++) {
 		fscanf(fin, "%f %f %f\n", &x, &y, &z);
@@ -456,13 +495,13 @@ Mesh* readPolygon()
 		surfmesh->face[n].z = d;
 
 		// Add neighbors for each vertex ***
-		addVertexNeighbors(b, c, d);
+		addNeighboringVertices(b, c, d);
 		// Add normal neighbors for each vertex
-		addNeighborNormals(n, b, c, d);
+		addNeighboringFaces(n, b, c, d);
 		// Calculate face surface normal ***
-		surfmesh->normal[n] = addNormal(surfmesh, b, c, d);
+		surfmesh->normal[n] = normal_from_vertices(surfmesh, b, c, d);
 		// Calculate triangle centroid ***
-		surfmesh->centroid[n] = addCentroid(surfmesh, b, c, d);
+		surfmesh->centroid[n] = calc_centroid(surfmesh, b, c, d);
 
 		if (a != 3)
 			printf("Errors: reading surfmesh .... \n");
@@ -747,30 +786,13 @@ void idle()
 	glutPostRedisplay();
 }
 
-void doSmooth()
-{
-	getRadius(surfmesh);
-
-	chrono::time_point<chrono::system_clock> start = chrono::system_clock::now();
-
-	smooth(surfmesh);
-
-	chrono::time_point<chrono::system_clock> end = chrono::system_clock::now();
-	chrono::duration<double> duration2 = end - start;
-	printf("Total duration = %f\n", duration2);
-
-	//*
-	// Write the smoothed mesh to OFF file
-	string meshPathOut(outputPath);
-	meshPathOut.append("smooth.off");
-	writeMeshToFile(surfmesh, meshPathOut.c_str());
-	//*/
-}
-
 int main(int argc, char *argv[])
 {
 	//thread t1(doSmooth);
-	doSmooth();
+	doSmooth(surfmesh);
+
+	// Write the smoothed mesh to OFF file
+	writeMeshToFile(surfmesh, "smooth.off");
 
 	glutInit(&argc, argv);
 
