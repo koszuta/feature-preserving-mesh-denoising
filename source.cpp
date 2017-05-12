@@ -615,6 +615,7 @@ void draw()
 		if (i == showFace % surfmesh->nf)
 		{
 			const GLfloat YELLOW[3] = { 1.0f, 1.0f, 0.0f };
+			//glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, YELLOW);
 		}
 		mtx.unlock();
 		glBegin(GL_TRIANGLES);
