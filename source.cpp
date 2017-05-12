@@ -33,6 +33,8 @@ static const char* inputPath = "fandisk_noise.off";
 // Output location
 static const char* outputPath = "";
 
+static int showFace = 0;
+
 
 // Define constants for algorithm ***
 static const int NF = 3;
@@ -112,12 +114,6 @@ static bool* isVertexVisited;
 static bool* isFaceVisited;
 
 
-// Intensity difference between surface normals ***
-float intensity_diff(glm::vec3 u, glm::vec3 v)
-{
-	return glm::dot(u, u - v);
-}
-
 // Get user defined center face and radius
 void getRadius(Mesh* mesh)
 {
@@ -194,6 +190,12 @@ float influence_func(float x)
 	return exp(-x*x / 2*sigS*sigS);
 }
 
+// Intensity difference between surface normals ***
+float intensity_diff(glm::vec3 ni, glm::vec3 nj)
+{
+	return glm::dot(ni, ni - nj);
+}
+
 // Apply bilateral filter to smooth surface normals ***
 void bilateral_filter(Mesh *mesh)
 {
@@ -247,11 +249,10 @@ void lse_correction(Mesh *mesh)
 		glm::vec3 sum;
 		for (int j : vertexNeighborVertices[i])
 		{
-			vector<int> edgeNeighbors(2);
-			//set_intersection(vertexNeighborFaces[i].begin(), vertexNeighborFaces[i].end(), vertexNeighborFaces[j].begin(), vertexNeighborFaces[j].end(), edgeNeighbors.begin());
 			glm::vec3 sum2;
-			for (int f = 0; f < edgeNeighborFaces[i].size(); f++)
+			for (int k = 0; k < edgeNeighborFaces[i][j].size(); k++)
 			{
+				int f = edgeNeighborFaces[i][j][k];
 				sum2 += outerProduct(mesh->normal[f], mesh->normal[f]) * (mesh->vertex[j] - mesh->vertex[i]);
 			}
 			sum += sum2;
@@ -611,6 +612,10 @@ void draw()
 		{
 			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, PURPLE);
 		}
+		if (i == showFace % surfmesh->nf)
+		{
+			const GLfloat YELLOW[3] = { 1.0f, 1.0f, 0.0f };
+		}
 		mtx.unlock();
 		glBegin(GL_TRIANGLES);
 			glVertex3f(surfmesh->vertex[surfmesh->face[i].x].x, surfmesh->vertex[surfmesh->face[i].x].y, surfmesh->vertex[surfmesh->face[i].x].z);
@@ -785,6 +790,7 @@ void mouseMotion(int x, int y)
 
 void idle()
 {
+	showFace+=10;
 	if (!mouseDown)
 	{
 		xrot += 0.3f;
