@@ -181,13 +181,13 @@ void getRadius(Mesh* mesh)
 // Spatial smoothing function ***
 float smoothing_func(float x)
 {
-	return exp(-x*x / 2*sigC*sigC);
+	return exp(-x*x / (2*sigC*sigC));
 }
 
 // Influence function ***
 float influence_func(float x)
 {
-	return exp(-x*x / 2*sigS*sigS);
+	return exp(-x*x / (2*sigS*sigS));
 }
 
 // Intensity difference between surface normals ***
