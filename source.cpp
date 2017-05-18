@@ -38,8 +38,8 @@ static int showFace = 0;
 
 // Define constants for algorithm ***
 static const int NF = 3;
-static const int NV = 10;
-static const float LAMBDA = 0.01f;// 0.6307f;
+static const int NV = 20;
+static const float LAMBDA = 0.05f;
 
 // User defined sigma c (radius) and sigma s (standard deviation
 // of intesity differneces between center and area) ***
@@ -598,6 +598,7 @@ void draw()
 	for (int i = 0; i < surfmesh->nf; ++i) {
 		// Use face's surface normal for lighting ***
 		glNormal3f(surfmesh->normal[i].x, surfmesh->normal[i].y, surfmesh->normal[i].z);
+		
 		mtx.lock();
 		if (i == userFace)
 		{
@@ -612,12 +613,15 @@ void draw()
 		{
 			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, PURPLE);
 		}
+		/*
 		if (i == showFace % surfmesh->nf)
 		{
 			const GLfloat YELLOW[3] = { 1.0f, 1.0f, 0.0f };
 			//glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, YELLOW);
 		}
+		//*/
 		mtx.unlock();
+
 		glBegin(GL_TRIANGLES);
 			glVertex3f(surfmesh->vertex[surfmesh->face[i].x].x, surfmesh->vertex[surfmesh->face[i].x].y, surfmesh->vertex[surfmesh->face[i].x].z);
 			glVertex3f(surfmesh->vertex[surfmesh->face[i].y].x, surfmesh->vertex[surfmesh->face[i].y].y, surfmesh->vertex[surfmesh->face[i].y].z);
